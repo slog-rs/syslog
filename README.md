@@ -14,4 +14,4 @@
   </a>
 </p>
 
-[slog-rs]: //github.com/slog-rs/core
+[slog-rs]: //github.com/slog-rs/slog
