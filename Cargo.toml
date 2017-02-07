@@ -1,6 +1,6 @@
 [package]
 name = "slog-syslog"
-version = "0.8.0"
+version = "0.8.1"
 authors = ["Dawid Ciężarkiewicz <dpc@dpc.pw>"]
 description = "Syslog drain for slog-rs"
 keywords = ["slog", "logging", "json", "log", "syslog"]
