@@ -14,4 +14,8 @@
   </a>
 </p>
 
+I've decided to yank all the 1.0.0-alpha* versions and stick to 0.x.y release schedule for now.
+
+Sorry for confusion.
+
 [slog-rs]: //github.com/slog-rs/slog
