@@ -2,11 +2,16 @@
 extern crate slog;
 extern crate slog_syslog;
 
-use slog::DrainExt;
+use slog::Drain;
 use slog_syslog::Facility;
 
 fn main() {
-    let root = slog::Logger::root(slog_syslog::unix_3164(Facility::LOG_USER).fuse(), o!("build-id" => "8dfljdf"));
+    let root = slog::Logger::root(slog_syslog::unix_3164(Facility::LOG_USER).fuse(), o!());
 
-    error!(root, "Test slog unix syslog message"; "x" => -1);
+    info!(root, "Starting");
+
+    let log = root.new(o!("who" => "slog-syslog test", "build-id" => "8dfljdf"));
+
+    info!(log, "Message"; "x" => -1, "y" => 2);
+    error!(log, "Error");
 }
