@@ -6,7 +6,8 @@ use slog::Drain;
 use slog_syslog::Facility;
 
 fn main() {
-    let root = slog::Logger::root(slog_syslog::unix_3164(Facility::LOG_USER).fuse(), o!());
+    let syslog = slog_syslog::unix_3164(Facility::LOG_USER).unwrap();
+    let root = slog::Logger::root(syslog.fuse(), o!());
 
     info!(root, "Starting");
 

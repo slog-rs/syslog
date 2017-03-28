@@ -1,5 +1,3 @@
-# slog-syslog - Syslog drain for [slog-rs]
-
 <p align="center">
   <a href="https://travis-ci.org/slog-rs/syslog">
       <img src="https://img.shields.io/travis/slog-rs/syslog/master.svg" alt="Travis CI Build Status">
@@ -14,8 +12,8 @@
   </a>
 </p>
 
-I've decided to yank all the 1.0.0-alpha* versions and stick to 0.x.y release schedule for now.
+# slog-syslog - Syslog drain for [slog-rs]
 
-Sorry for confusion.
+For more information, help, to report issues etc. see [slog-rs][slog-rs].
 
 [slog-rs]: //github.com/slog-rs/slog
