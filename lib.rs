@@ -10,10 +10,12 @@
 //! use slog_syslog::Facility;
 //!
 //! fn main() {
-//!     let drain = slog_syslog::unix_3164(
-//!                 Facility::LOG_USER,
-//!                 );
-//!     let root = Logger::root(drain.fuse(), o!("build-id" => "8dfljdf"));
+//!     let o = o!("build-id" => "8dfljdf");
+//!     let root = if let Ok(drain) = slog_syslog::unix_3164(Facility::LOG_USER) {
+//!         Logger::root(drain.fuse(), o)
+//!     } else {
+//!         Logger::root(Discard, o)
+//!     };
 //! }
 //! ```
 #![warn(missing_docs)]
