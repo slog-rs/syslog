@@ -1,7 +1,7 @@
 [package]
 name = "slog-syslog"
-version = "0.11.0"
-authors = ["Dawid Ciężarkiewicz <dpc@dpc.pw>"]
+version = "2.2.0"
+authors = ["Dawid Ciężarkiewicz <dpc@dpc.pw>", "William Laeder <codylaeder@gmail.com" ]
 description = "Syslog drain for slog-rs"
 keywords = ["slog", "logging", "json", "log", "syslog"]
 license = "MPL-2.0"
@@ -14,6 +14,6 @@ readme = "README.md"
 path = "lib.rs"
 
 [dependencies]
-slog = "2"
-syslog = "3.2.0"
+slog = "2.1.1"
+syslog = "3.3.0"
 nix = "0.9.0"
