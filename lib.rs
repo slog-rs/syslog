@@ -1,7 +1,5 @@
 //! Syslog drain for slog-rs
 //!
-//! WARNING: This crate needs some improvements.
-//!
 //! ```
 //! extern crate slog;
 //! extern crate slog_syslog;
@@ -11,10 +9,17 @@
 //!
 //! fn main() {
 //!     let o = o!("build-id" => "8dfljdf");
-//!     let root = if let Ok(drain) = slog_syslog::unix_3164(Facility::LOG_USER) {
-//!         Logger::root(drain.fuse(), o)
-//!     } else {
-//!         Logger::root(Discard, o)
+//!
+//!     // log to a local unix sock `/var/run/syslog`
+//!     match slog_syslog::SyslogBuilder::new()
+//!         .facility(Facility::LOG_USER)
+//!         .level(slog::Level::Debug)
+//!         .unix("/var/run/syslog")
+//!         .start() {
+//!         Ok(x) => {
+//!             let root = Logger::root(x.fuse(), o);
+//!         },
+//!         Err(e) => println!("Failed to start syslog on `var/run/syslog`. Error {:?}", e)
 //!     };
 //! }
 //! ```
@@ -28,6 +33,9 @@ use slog::{Drain, Level, Record, OwnedKVList};
 use std::{io, fmt};
 use std::sync::Mutex;
 use std::cell::RefCell;
+use std::path::{PathBuf,Path};
+use std::net::SocketAddr;
+use std::io::{Error,ErrorKind};
 
 use slog::KV;
 
@@ -83,7 +91,7 @@ impl Drain for Streamer3164 {
                     {
                         let io = try!(self.io
                             .lock()
-                            .map_err(|_| io::Error::new(io::ErrorKind::Other, "locking error")));
+                            .map_err(|_| Error::new(ErrorKind::Other, "locking error")));
 
                         let buf = String::from_utf8_lossy(&buf);
                         let buf = io.format_3164(sever, &buf).into_bytes();
@@ -152,6 +160,104 @@ impl<W: io::Write> slog::Serializer for KSV<W> {
         Ok(())
     }
 }
+
+enum SyslogKind {
+    Unix{ path: PathBuf },
+    Tcp{server: SocketAddr, hostname: String},
+    Udp{local: SocketAddr, host: SocketAddr, hostname: String},
+}
+
+/// Builder pattern for constructing a syslog
+pub struct SyslogBuilder {
+    facility: Option<syslog::Facility>,
+    level: syslog::Severity,
+    logkind: Option<SyslogKind>,
+}
+impl Default for SyslogBuilder {
+    fn default() -> Self {
+        Self {
+            facility: None,
+            level: syslog::Severity::LOG_DEBUG,
+            logkind: None,
+        }
+    }
+}
+impl SyslogBuilder {
+
+    /// Build a default logger
+    ///
+    /// By default this will attempt to connect to (in order)
+    pub fn new() -> SyslogBuilder {
+        Self::default()
+    }
+
+    /// Set syslog Facility
+    pub fn facility(self, facility: syslog::Facility) -> Self {
+        let mut s = self;
+        s.facility = Some(facility);
+        s
+    }
+
+    /// Filter Syslog by level
+    pub fn level(self, lvl: slog::Level) -> Self {
+        let mut s = self;
+        s.level = level_to_severity(lvl);
+        s
+    }
+
+    /// Remote UDP syslogging
+    pub fn udp<S: AsRef<str>>(self, local: SocketAddr, host: SocketAddr, hostname: S) -> Self {
+        let mut s = self;
+        let hostname = hostname.as_ref().to_string();
+        s.logkind = Some(SyslogKind::Udp{ local, host, hostname });
+        s
+    }
+
+    /// Remote TCP syslogging
+    pub fn tcp<S: AsRef<str>>(self, server: SocketAddr, hostname: S) -> Self {
+        let mut s = self;
+        let hostname = hostname.as_ref().to_string();
+        s.logkind = Some(SyslogKind::Tcp{ server, hostname });
+        s
+    }
+
+    /// Local syslogging over a unix socket 
+    pub fn unix<P: AsRef<Path>>(self, path: P) -> Self {
+        let mut s = self;
+        let path = path.as_ref().to_path_buf();
+        s.logkind = Some(SyslogKind::Unix{ path });
+        s
+    }
+
+    /// Start running
+    pub fn start(self) -> io::Result<Streamer3164> {
+        let facility = match self.facility {
+            Option::Some(x) => x,
+            Option::None => {
+                return Err(Error::new(ErrorKind::Other, "facility must be provided to the builder"));
+            }
+        };
+        let logkind = match self.logkind {
+            Option::Some(l) => l,
+            Option::None => {
+                return Err(Error::new(ErrorKind::Other, "no logger kind provided, library does not know what do initialize"));
+            }
+        };
+        let log = match logkind {
+            SyslogKind::Unix{ path } => {
+                syslog::unix_custom(facility,path)?
+            },
+            SyslogKind::Udp{ local, host, hostname } => {
+                syslog::udp(local, host, hostname, facility)?
+            },
+            SyslogKind::Tcp{server, hostname} => {
+                syslog::tcp(server, hostname, facility)?
+            },
+        };
+        Ok(Streamer3164::new(log))
+    }
+}
+
 /// `Streamer` to Unix syslog using RFC 3164 format
 pub fn unix_3164(facility: syslog::Facility) -> io::Result<Streamer3164> {
     syslog::unix(facility).map(Streamer3164::new)
