@@ -25,17 +25,17 @@
 //! ```
 #![warn(missing_docs)]
 
+extern crate nix;
 extern crate slog;
 extern crate syslog;
-extern crate nix;
 
-use slog::{Drain, Level, Record, OwnedKVList};
-use std::{io, fmt};
+use slog::{Drain, Level, OwnedKVList, Record};
+use std::{fmt, io};
 use std::sync::Mutex;
 use std::cell::RefCell;
-use std::path::{PathBuf,Path};
+use std::path::{Path, PathBuf};
 use std::net::SocketAddr;
-use std::io::{Error,ErrorKind};
+use std::io::{Error, ErrorKind};
 
 use slog::KV;
 
@@ -54,7 +54,6 @@ fn level_to_severity(level: slog::Level) -> syslog::Severity {
         Level::Debug => syslog::Severity::LOG_INFO,
         Level::Trace => syslog::Severity::LOG_DEBUG,
     }
-
 }
 
 /// Drain formatting records and writing them to a syslog ``Logger`
@@ -81,7 +80,6 @@ impl Drain for Streamer3164 {
     type Ok = ();
 
     fn log(&self, info: &Record, logger_values: &OwnedKVList) -> io::Result<()> {
-
         TL_BUF.with(|buf| {
             let mut buf = buf.borrow_mut();
             let res = {
@@ -89,9 +87,11 @@ impl Drain for Streamer3164 {
                     try!(self.format.format(&mut *buf, info, logger_values));
                     let sever = level_to_severity(info.level());
                     {
-                        let io = try!(self.io
-                            .lock()
-                            .map_err(|_| Error::new(ErrorKind::Other, "locking error")));
+                        let io = try!(
+                            self.io
+                                .lock()
+                                .map_err(|_| Error::new(ErrorKind::Other, "locking error"))
+                        );
 
                         let buf = String::from_utf8_lossy(&buf);
                         let buf = io.format_3164(sever, &buf).into_bytes();
@@ -100,7 +100,7 @@ impl Drain for Streamer3164 {
                         while pos < buf.len() {
                             let n = try!(io.send_raw(&buf[pos..]));
                             if n == 0 {
-                                break
+                                break;
                             }
 
                             pos += n;
@@ -125,11 +125,12 @@ impl Format3164 {
         Format3164
     }
 
-    fn format(&self,
-              io: &mut io::Write,
-              record: &Record,
-              logger_kv: &OwnedKVList)
-              -> io::Result<()> {
+    fn format(
+        &self,
+        io: &mut io::Write,
+        record: &Record,
+        logger_kv: &OwnedKVList,
+    ) -> io::Result<()> {
         try!(write!(io, "{}", record.msg()));
 
         let mut ser = KSV::new(io);
@@ -148,9 +149,7 @@ struct KSV<W: io::Write> {
 
 impl<W: io::Write> KSV<W> {
     fn new(io: W) -> Self {
-        KSV {
-            io: io,
-        }
+        KSV { io: io }
     }
 }
 
@@ -162,9 +161,18 @@ impl<W: io::Write> slog::Serializer for KSV<W> {
 }
 
 enum SyslogKind {
-    Unix{ path: PathBuf },
-    Tcp{server: SocketAddr, hostname: String},
-    Udp{local: SocketAddr, host: SocketAddr, hostname: String},
+    Unix {
+        path: PathBuf,
+    },
+    Tcp {
+        server: SocketAddr,
+        hostname: String,
+    },
+    Udp {
+        local: SocketAddr,
+        host: SocketAddr,
+        hostname: String,
+    },
 }
 
 /// Builder pattern for constructing a syslog
@@ -183,7 +191,6 @@ impl Default for SyslogBuilder {
     }
 }
 impl SyslogBuilder {
-
     /// Build a default logger
     ///
     /// By default this will attempt to connect to (in order)
@@ -209,7 +216,11 @@ impl SyslogBuilder {
     pub fn udp<S: AsRef<str>>(self, local: SocketAddr, host: SocketAddr, hostname: S) -> Self {
         let mut s = self;
         let hostname = hostname.as_ref().to_string();
-        s.logkind = Some(SyslogKind::Udp{ local, host, hostname });
+        s.logkind = Some(SyslogKind::Udp {
+            local,
+            host,
+            hostname,
+        });
         s
     }
 
@@ -217,15 +228,15 @@ impl SyslogBuilder {
     pub fn tcp<S: AsRef<str>>(self, server: SocketAddr, hostname: S) -> Self {
         let mut s = self;
         let hostname = hostname.as_ref().to_string();
-        s.logkind = Some(SyslogKind::Tcp{ server, hostname });
+        s.logkind = Some(SyslogKind::Tcp { server, hostname });
         s
     }
 
-    /// Local syslogging over a unix socket 
+    /// Local syslogging over a unix socket
     pub fn unix<P: AsRef<Path>>(self, path: P) -> Self {
         let mut s = self;
         let path = path.as_ref().to_path_buf();
-        s.logkind = Some(SyslogKind::Unix{ path });
+        s.logkind = Some(SyslogKind::Unix { path });
         s
     }
 
@@ -234,25 +245,29 @@ impl SyslogBuilder {
         let facility = match self.facility {
             Option::Some(x) => x,
             Option::None => {
-                return Err(Error::new(ErrorKind::Other, "facility must be provided to the builder"));
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    "facility must be provided to the builder",
+                ));
             }
         };
         let logkind = match self.logkind {
             Option::Some(l) => l,
             Option::None => {
-                return Err(Error::new(ErrorKind::Other, "no logger kind provided, library does not know what do initialize"));
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    "no logger kind provided, library does not know what do initialize",
+                ));
             }
         };
         let log = match logkind {
-            SyslogKind::Unix{ path } => {
-                syslog::unix_custom(facility,path)?
-            },
-            SyslogKind::Udp{ local, host, hostname } => {
-                syslog::udp(local, host, hostname, facility)?
-            },
-            SyslogKind::Tcp{server, hostname} => {
-                syslog::tcp(server, hostname, facility)?
-            },
+            SyslogKind::Unix { path } => syslog::unix_custom(facility, path)?,
+            SyslogKind::Udp {
+                local,
+                host,
+                hostname,
+            } => syslog::udp(local, host, hostname, facility)?,
+            SyslogKind::Tcp { server, hostname } => syslog::tcp(server, hostname, facility)?,
         };
         Ok(Streamer3164::new(log))
     }
