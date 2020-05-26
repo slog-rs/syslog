@@ -1,6 +1,6 @@
 [package]
 name = "slog-syslog"
-version = "0.12.0"
+version = "0.13.0"
 authors = ["Dawid Ciężarkiewicz <dpc@dpc.pw>", "William Laeder <codylaeder@gmail.com" ]
 description = "Syslog drain for slog-rs"
 keywords = ["slog", "logging", "json", "log", "syslog"]
@@ -14,6 +14,6 @@ readme = "README.md"
 path = "lib.rs"
 
 [dependencies]
+hostname = "0.3"
 slog = "^2.1.1"
-syslog = "3.3.0"
-nix = "0.14.0"
+syslog = "5.0.0"
