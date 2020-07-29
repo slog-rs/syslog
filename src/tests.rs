@@ -2,7 +2,7 @@ use Facility;
 use format::CustomMsgFormat;
 use libc;
 use mock;
-use slog::{self, Logger};
+use slog::{self, Logger, Level};
 use std::borrow::Cow;
 use std::ffi::CStr;
 use SyslogBuilder;
@@ -43,6 +43,21 @@ fn test_log() {
             .build(), o!());
 
         info!(logger2, "Message from second logger while first still active."; "key" => "value");
+
+        mock::wait_for_event_matching(|event| match event {
+            mock::Event::SysLog { message, .. } => message == &slog::Error::Other.to_string(),
+            _ => false,
+        });
+
+
+        let logger3 = Logger::root_typed(SyslogBuilder::new()
+            .facility(Facility::Local1)
+            .log_priority(Level::Error)
+            .ident(Cow::Borrowed(CStr::from_bytes_with_nul(b"logger3\0").unwrap()))
+            .format(CustomMsgFormat(|_, _, _| Err(slog::Error::Other)))
+            .build(), o!());
+
+        info!(logger3, "Message from third logger while first still active."; "key" => "value");
 
         mock::wait_for_event_matching(|event| match event {
             mock::Event::SysLog { message, .. } => message == &slog::Error::Other.to_string(),
@@ -90,8 +105,24 @@ fn test_log() {
             message_f: "Error fully formatting the previous log message: %s".to_string(),
             message: slog::Error::Other.to_string(),
         },
+
+        mock::Event::OpenLog {
+            facility: libc::LOG_LOCAL1,
+            flags: 0,
+            ident: "logger3".to_string(),
+        },
+        mock::Event::SysLog {
+            priority: libc::LOG_ERR,
+            message_f: "%s".to_string(),
+            message: "Message from third logger while first still active.".to_string(),
+        },
+        mock::Event::SysLog {
+            priority: libc::LOG_ERR,
+            message_f: "Error fully formatting the previous log message: %s".to_string(),
+            message: slog::Error::Other.to_string(),
+        },
         mock::Event::DropOwnedIdent("example-app".to_string()),
-        // No `CloseLog` for `logger2` because it doesn't own its `ident`.
+        // No `CloseLog` for `logger2` and `logger3` because it doesn't own its `ident`.
     ];
 
     assert!(events == expected_events, "events didn't match\ngot: {:#?}\nexpected: {:#?}", events, expected_events);

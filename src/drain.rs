@@ -67,6 +67,9 @@ pub struct SyslogDrain<F: MsgFormat> {
     /// necessary) when this `SyslogDrain` is dropped.
     unique_ident: Option<Box<CStr>>,
 
+    /// Log all messages with the given priority
+    log_priority: libc::c_int,
+
     /// The format for log messages.
     format: F,
 }
@@ -135,6 +138,7 @@ impl<F: MsgFormat> SyslogDrain<F> {
 
         SyslogDrain {
             unique_ident,
+            log_priority: builder.log_priority,
             format: builder.format,
         }
     }
@@ -225,17 +229,7 @@ impl<F: MsgFormat> Drain for SyslogDrain<F> {
             let mut tl_buf = &mut *tl_buf_mut;
 
             // Figure out the priority.
-            let priority: c_int = match record.level() {
-                Level::Critical => libc::LOG_CRIT,
-                Level::Error => libc::LOG_ERR,
-                Level::Warning => libc::LOG_WARNING,
-                Level::Debug | Level::Trace => libc::LOG_DEBUG,
-
-                // `slog::Level` isn't non-exhaustive, so adding any more levels
-                // would be a breaking change. That is highly unlikely to ever
-                // happen. Still, we'll handle the possibility here, just in case.
-                _ => libc::LOG_INFO
-            };
+            let priority = if self.log_priority > 0 { self.log_priority } else { get_priority(record.level()) };
 
             // Format the message. 
             let fmt_err = format(&self.format, &mut tl_buf, record, values).err();
@@ -311,4 +305,19 @@ fn make_cstr_lossy(s: &mut Vec<u8>) -> &CStr {
 fn assert_format_success(_result: io::Result<()>) {
     #[cfg(debug)]
     _result.expect("unexpected formatting error");
+}
+
+
+pub(crate) fn get_priority(level: Level) -> c_int {
+    match level {
+        Level::Critical => libc::LOG_CRIT,
+        Level::Error => libc::LOG_ERR,
+        Level::Warning => libc::LOG_WARNING,
+        Level::Debug | Level::Trace => libc::LOG_DEBUG,
+
+        // `slog::Level` isn't non-exhaustive, so adding any more levels
+        // would be a breaking change. That is highly unlikely to ever
+        // happen. Still, we'll handle the possibility here, just in case.
+        _ => libc::LOG_INFO
+    }
 }

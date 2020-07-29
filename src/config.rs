@@ -6,7 +6,7 @@
 
 use Facility;
 use format::{BasicMsgFormat, DefaultMsgFormat, MsgFormat};
-use slog::{self, OwnedKVList, Record};
+use slog::{self, OwnedKVList, Record, Level};
 use std::borrow::Cow;
 use std::ffi::CStr;
 use std::fmt;
@@ -92,6 +92,9 @@ pub struct SyslogConfig {
     /// in garbled output.
     pub log_perror: bool,
 
+    /// Log all messages with the given priority
+    pub log_priority: Option<Level>,
+
     #[serde(skip)]
     __non_exhaustive: (),
 }
@@ -129,6 +132,11 @@ impl SyslogConfig {
             false => b,
         };
 
+        let b = match self.log_priority {
+            Some(priority) => b.log_priority(priority),
+            None => b,
+        };
+
         b
     }
 
@@ -147,6 +155,7 @@ impl Default for SyslogConfig {
             log_pid: false,
             log_delay: None,
             log_perror: false,
+            log_priority: None,
             __non_exhaustive: (),
         }
     }

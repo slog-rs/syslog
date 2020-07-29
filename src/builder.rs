@@ -1,9 +1,10 @@
-use Facility;
+use ::{Facility, get_priority};
 use format::{DefaultMsgFormat, MsgFormat};
 use libc;
 use SyslogDrain;
 use std::borrow::Cow;
 use std::ffi::{CStr, CString};
+use slog::Level;
 
 /// Builds a [`SyslogDrain`].
 /// 
@@ -19,6 +20,7 @@ pub struct SyslogBuilder<F: MsgFormat = DefaultMsgFormat> {
     pub(crate) facility: Facility,
     pub(crate) ident: Option<Cow<'static, CStr>>,
     pub(crate) option: libc::c_int,
+    pub(crate) log_priority: libc::c_int,
     pub(crate) format: F,
 }
 
@@ -28,6 +30,7 @@ impl Default for SyslogBuilder {
             facility: Facility::default(),
             ident: None,
             option: 0,
+            log_priority: 0,
             format: DefaultMsgFormat,
         }
     }
@@ -237,6 +240,14 @@ impl<F: MsgFormat> SyslogBuilder<F> {
         self
     }
 
+    /// Log all messages with the given syslog priority
+    #[inline]
+    pub fn log_priority(mut self, log_priority: Level) -> Self {
+        self.log_priority = get_priority(log_priority);
+        self
+    }
+
+
     /// Set a format for log messages and structured data.
     /// 
     /// The default is [`DefaultMsgFormat`].
@@ -258,6 +269,7 @@ impl<F: MsgFormat> SyslogBuilder<F> {
             facility: self.facility,
             ident: self.ident,
             option: self.option,
+            log_priority: self.log_priority,
             format,
         }
     }

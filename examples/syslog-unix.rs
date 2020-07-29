@@ -3,9 +3,10 @@ extern crate slog;
 extern crate slog_syslog;
 
 use slog_syslog::{Facility, SyslogBuilder};
+use slog::Level;
 
 fn main() {
-    let syslog = SyslogBuilder::new().facility(Facility::User).build();
+    let syslog = SyslogBuilder::new().facility(Facility::User).log_priority(Level::Error).build();
     let root = slog::Logger::root(syslog, o!());
 
     info!(root, "Starting");
