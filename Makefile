@@ -15,25 +15,29 @@ CARGO_FLAGS += --release
 else
 $(info DEBUG BUILD: $(PKG_NAME); use `RELEASE=true make [args]` for release build)
 endif
+CARGO_FEATURES=serde
 
 EXAMPLES = $(shell cd examples 2>/dev/null && ls *.rs 2>/dev/null | sed -e 's/.rs$$//g' )
 
 all: $(ALL_TARGETS)
 
 .PHONY: run test build doc clean clippy
-run test build clean:
+run test build:
+	cargo $@ --features $(CARGO_FEATURES) $(CARGO_FLAGS)
+
+clean:
 	cargo $@ $(CARGO_FLAGS)
 
 check:
 	$(info Running check; use `make build` to actually build)
-	cargo $@ $(CARGO_FLAGS)
+	cargo $@ --features $(CARGO_FEATURES) $(CARGO_FLAGS)
 
 clippy:
-	cargo build --features clippy
+	cargo build --features clippy,$(CARGO_FEATURES)
 
 .PHONY: bench
 bench:
-	cargo $@ $(filter-out --release,$(CARGO_FLAGS))
+	cargo $@ --features $(CARGO_FEATURES) $(filter-out --release,$(CARGO_FLAGS))
 
 .PHONY: travistest
 travistest: test
@@ -50,7 +54,7 @@ $(EXAMPLES):
 
 .PHONY: doc
 doc: FORCE
-	cargo doc
+	cargo --features $(CARGO_FEATURES) doc
 
 .PHONY: publishdoc
 publishdoc:

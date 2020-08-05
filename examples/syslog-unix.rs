@@ -2,12 +2,20 @@
 extern crate slog;
 extern crate slog_syslog;
 
-use slog::Drain;
-use slog_syslog::Facility;
+use slog_syslog::adapter::{Adapter, DefaultAdapter};
+use slog_syslog::{Facility, SyslogBuilder};
+use slog::Level;
 
 fn main() {
-    let syslog = slog_syslog::unix_3164(Facility::LOG_USER).unwrap();
-    let root = slog::Logger::root(syslog.fuse(), o!());
+    let syslog = SyslogBuilder::new()
+        .facility(Facility::User)
+        .adapter(DefaultAdapter.with_priority(|record, values| match record.level() {
+            Level::Info => slog_syslog::Level::Notice.into(),
+            _ => DefaultAdapter.priority(record, values),
+        }))
+        .build();
+
+    let root = slog::Logger::root(syslog, o!());
 
     info!(root, "Starting");
 
