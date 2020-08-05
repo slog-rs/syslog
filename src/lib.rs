@@ -35,7 +35,7 @@
 //! 
 //! POSIX doesn't support opening more than one connection to the syslog server
 //! at a time. All [`SyslogBuilder` settings] except
-//! [`format`][`SyslogBuilder::format`] are stored in global variables by the
+//! [`adapter`][`SyslogBuilder::adapter`] are stored in global variables by the
 //! platform libc, are overwritten whenever the POSIX `openlog` function is
 //! called (which happens when a [`SyslogDrain`] is created), and are reset
 //! whenever the POSIX `closelog` function is called (which may happen when a
@@ -55,11 +55,11 @@
 //! 
 //! Failure to abide by these rules may result in `closelog` being called at
 //! the wrong time. This will cause [`SyslogBuilder` settings] (except
-//! [`format`][`SyslogBuilder::format`]) to be reset, and there may be a delay
+//! [`adapter`][`SyslogBuilder::adapter`]) to be reset, and there may be a delay
 //! in processing the next log message after that (because the connection to
 //! the syslog server, if applicable, must be reopened).
 //! 
-//! [`SyslogBuilder::format`]: struct.SyslogBuilder.html#method.format
+//! [`SyslogBuilder::adapter`]: struct.SyslogBuilder.html#method.adapter
 //! [`SyslogBuilder` settings]: struct.SyslogBuilder.html#impl
 //! [`SyslogDrain`]: struct.SyslogDrain.html
 
@@ -141,6 +141,8 @@ extern crate slog;
 #[cfg(all(test, feature = "serde"))]
 extern crate toml;
 
+pub mod adapter;
+
 mod builder;
 pub use builder::*;
 
@@ -158,4 +160,8 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
-pub mod format;
+mod level;
+pub use level::*;
+
+mod priority;
+pub use priority::*;

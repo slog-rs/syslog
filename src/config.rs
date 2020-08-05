@@ -4,14 +4,12 @@
 //! [serde]: https://serde.rs/
 //! [`SyslogDrain`]: ../struct.SyslogDrain.html
 
-use Facility;
-use format::{BasicMsgFormat, DefaultMsgFormat, MsgFormat};
-use slog::{self, OwnedKVList, Record, Level};
+use ::{Facility, Priority, SyslogBuilder, SyslogDrain};
+use adapter::{Adapter, BasicAdapter, DefaultAdapter};
+use slog::{self, OwnedKVList, Record};
 use std::borrow::Cow;
 use std::ffi::CStr;
 use std::fmt;
-use SyslogBuilder;
-use SyslogDrain;
 #[cfg(test)] use toml;
 
 /// Deserializable configuration for a [`SyslogDrain`].
@@ -28,9 +26,9 @@ pub struct SyslogConfig {
     /// 
     /// Possible values are `default` and `basic`.
     /// 
-    /// See [`MsgFormat`] for more information.
+    /// See [`Adapter`] for more information.
     /// 
-    /// [`MsgFormat`]: ../format/trait.MsgFormat.html
+    /// [`Adapter`]: ../adapter/trait.Adapter.html
     pub format: MsgFormatConfig,
 
     /// The syslog facility to send logs to.
@@ -92,8 +90,13 @@ pub struct SyslogConfig {
     /// in garbled output.
     pub log_perror: bool,
 
-    /// Log all messages with the given priority
-    pub log_priority: Option<Level>,
+    /// Log some or all messages with the given [priority][`Priority`].
+    /// 
+    /// See [`Priority`] and [`Adapter::with_priority`] for more information.
+    /// 
+    /// [`Adapter::with_priority`]: ../adapter/trait.Adapter.html#method.with_priority
+    /// [`Priority`]: ../struct.Priority.html
+    pub priority: PriorityConfig,
 
     #[serde(skip)]
     __non_exhaustive: (),
@@ -106,10 +109,10 @@ impl SyslogConfig {
     }
 
     /// Creates a new `SyslogBuilder` from the settings.
-    pub fn into_builder(self) -> SyslogBuilder<ConfiguredMsgFormat> {
+    pub fn into_builder(self) -> SyslogBuilder<ConfiguredAdapter> {
         let b = SyslogBuilder::new()
         .facility(self.facility)
-        .format(self.format.into());
+        .adapter((self.format, self.priority).into());
 
         let b = match self.ident {
             Some(ident) => b.ident(ident),
@@ -132,16 +135,11 @@ impl SyslogConfig {
             false => b,
         };
 
-        let b = match self.log_priority {
-            Some(priority) => b.log_priority(priority),
-            None => b,
-        };
-
         b
     }
 
     /// Creates a new `SyslogDrain` from the settings.
-    pub fn build(self) -> SyslogDrain<ConfiguredMsgFormat> {
+    pub fn build(self) -> SyslogDrain<ConfiguredAdapter> {
         self.into_builder().build()
     }
 }
@@ -155,20 +153,20 @@ impl Default for SyslogConfig {
             log_pid: false,
             log_delay: None,
             log_perror: false,
-            log_priority: None,
+            priority: PriorityConfig::default(),
             __non_exhaustive: (),
         }
     }
 }
 
-/// Enumeration of built-in `MsgFormat`s.
+/// Enumeration of built-in formatting styles.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MsgFormatConfig {
-    /// [`DefaultMsgFormat`](struct.DefaultMsgFormat.html).
+    /// RFC 5424-like formatting, using [`DefaultAdapter`](struct.DefaultAdapter.html).
     Default,
 
-    /// [`BasicMsgFormat`](struct.BasicMsgFormat.html).
+    /// Log the message only, not structured data, using [`BasicAdapter`](struct.BasicAdapter.html).
     Basic,
 
     #[doc(hidden)]
@@ -181,47 +179,192 @@ impl Default for MsgFormatConfig {
     }
 }
 
-/// Implements [`MsgFormat`] based on the settings in a [`MsgFormatConfig`].
+/// Configures mapping of [`slog::Level`]s to [syslog priorities].
 /// 
-/// This is the type of [`MsgFormat`] used by [`SyslogDrain`]s constructed from
+/// # TOML Example
+/// 
+/// This configuration will log [`slog::Level::Info`] messages with level
+/// [`Notice`] and facility [`Daemon`], and log [`slog::Level::Critical`]
+/// messages with level [`Alert`] and facility [`Mail`]:
+/// 
+/// ```
+/// # use slog_syslog::{Facility, Level, Priority};
+/// # use slog_syslog::config::{PriorityConfig, SyslogConfig};
+/// #
+/// # const TOML_CONFIG: &'static str = r#"
+/// ident = "foo"
+/// facility = "daemon"
+/// 
+/// [priority]
+/// info = "notice"
+/// critical = ["alert", "mail"]
+/// # "#;
+/// #
+/// # let config: SyslogConfig = toml::de::from_str(TOML_CONFIG).expect("deserialization failed");
+/// # assert_eq!(config.priority, {
+/// #     let mut exp = PriorityConfig::new();
+/// #     exp.info = Some(Priority::new(Level::Notice, None));
+/// #     exp.critical = Some(Priority::new(Level::Alert, Some(Facility::Mail)));
+/// #     exp
+/// # });
+/// ```
+/// 
+/// [`Alert`]: ../enum.Level.html#variant.Alert
+/// [`Daemon`]: ../enum.Facility.html#variant.Daemon
+/// [`Mail`]: ../enum.Facility.html#variant.Mail
+/// [`Notice`]: ../enum.Level.html#variant.Notice
+/// [`slog::Level`]: https://docs.rs/slog/2/slog/enum.Level.html
+/// [`slog::Level::Critical`]: https://docs.rs/slog/2/slog/enum.Level.html#variant.Critical
+/// [`slog::Level::Info`]: https://docs.rs/slog/2/slog/enum.Level.html#variant.Info
+/// [syslog priorities]: ../struct.Priority.html
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct PriorityConfig {
+    /// Default priority for all messages.
+    /// 
+    /// If this is not given, the [`Level`] is chosen with [`Level::from_slog`]
+    /// and the [`Facility`] is taken from [`SyslogConfig::facility`].
+    /// 
+    /// [`Facility`]: ../enum.Facility.html
+    /// [`Level`]: ../enum.Level.html
+    /// [`Level::from_slog`]: ../enum.Level.html#method.from_slog
+    /// [`SyslogConfig::facility`]: struct.SyslogConfig.html#structfield.facility
+    pub all: Option<Priority>,
+
+    /// Priority for [`slog::Level::Trace`].
+    /// 
+    /// [`slog::Level::Trace`]: https://docs.rs/slog/2/slog/enum.Level.html#variant.Trace
+    pub trace: Option<Priority>,
+
+    /// Priority for [`slog::Level::Debug`].
+    /// 
+    /// [`slog::Level::Debug`]: https://docs.rs/slog/2/slog/enum.Level.html#variant.Debug
+    pub debug: Option<Priority>,
+
+    /// Priority for [`slog::Level::Info`].
+    /// 
+    /// [`slog::Level::Info`]: https://docs.rs/slog/2/slog/enum.Level.html#variant.Info
+    pub info: Option<Priority>,
+
+    /// Priority for [`slog::Level::Warning`].
+    /// 
+    /// [`slog::Level::Warning`]: https://docs.rs/slog/2/slog/enum.Level.html#variant.Warning
+    pub warning: Option<Priority>,
+
+    /// Priority for [`slog::Level::Error`].
+    /// 
+    /// [`slog::Level::Error`]: https://docs.rs/slog/2/slog/enum.Level.html#variant.Error
+    pub error: Option<Priority>,
+
+    /// Priority for [`slog::Level::Critical`].
+    /// 
+    /// [`slog::Level::Critical`]: https://docs.rs/slog/2/slog/enum.Level.html#variant.Critical
+    pub critical: Option<Priority>,
+
+    #[serde(skip)]
+    __non_exhaustive: (),
+}
+
+impl PriorityConfig {
+    /// Creates a new `PriorityConfig` with default settings.
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
+/// Implements [`Adapter`] based on the settings in an [`MsgFormatConfig`] and
+/// [`PriorityConfig`].
+/// 
+/// This is the type of [`Adapter`] used by [`SyslogDrain`]s constructed from
 /// a [`SyslogConfig`].
 /// 
-/// [`MsgFormat`]: ../format/trait.MsgFormat.html
+/// [`Adapter`]: ../adapter/trait.Adapter.html
 /// [`MsgFormatConfig`]: enum.MsgFormatConfig.html
+/// [`PriorityConfig`]: struct.PriorityConfig.html
 /// [`SyslogConfig`]: struct.SyslogConfig.html
 /// [`SyslogDrain`]: ../struct.SyslogDrain.html
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
-pub struct ConfiguredMsgFormat {
-    config: MsgFormatConfig,
+pub struct ConfiguredAdapter {
+    format: MsgFormatConfig,
+    priority: PriorityConfig,
 }
 
-impl MsgFormat for ConfiguredMsgFormat {
+impl Adapter for ConfiguredAdapter {
     fn fmt(&self, f: &mut fmt::Formatter, record: &Record, values: &OwnedKVList) -> slog::Result {
-        match self.config {
-            MsgFormatConfig::Basic => BasicMsgFormat.fmt(f, record, values),
-            MsgFormatConfig::Default => DefaultMsgFormat.fmt(f, record, values),
+        match self.format {
+            MsgFormatConfig::Basic => BasicAdapter.fmt(f, record, values),
+            MsgFormatConfig::Default => DefaultAdapter.fmt(f, record, values),
             MsgFormatConfig::__NonExhaustive => panic!("MsgFormatConfig::__NonExhaustive used")
+        }
+    }
+
+    fn priority(&self, record: &Record, values: &OwnedKVList) -> Priority {
+        let priority = match record.level() {
+            slog::Level::Critical => self.priority.critical,
+            slog::Level::Error => self.priority.error,
+            slog::Level::Warning => self.priority.warning,
+            slog::Level::Debug => self.priority.debug,
+            slog::Level::Trace => self.priority.trace,
+            _ => self.priority.info,
+        };
+
+        match (priority, self.priority.all) {
+            (Some(priority), Some(priority_all)) => priority.overlay(priority_all),
+            (None, Some(priority_all)) => priority_all,
+            (Some(priority), None) => priority,
+            (None, None) => DefaultAdapter.priority(record, values),
         }
     }
 }
 
-impl From<MsgFormatConfig> for ConfiguredMsgFormat {
+impl From<MsgFormatConfig> for ConfiguredAdapter {
     fn from(config: MsgFormatConfig) -> Self {
-        ConfiguredMsgFormat {
-            config
+        ConfiguredAdapter {
+            format: config,
+            priority: PriorityConfig::default(),
         }
+    }
+}
+
+impl From<PriorityConfig> for ConfiguredAdapter {
+    fn from(priority: PriorityConfig) -> Self {
+        ConfiguredAdapter {
+            format: MsgFormatConfig::Default,
+            priority,
+        }
+    }
+}
+
+impl From<(Option<MsgFormatConfig>, Option<PriorityConfig>)> for ConfiguredAdapter {
+    fn from((format_opt, priority_opt): (Option<MsgFormatConfig>, Option<PriorityConfig>)) -> Self {
+        ConfiguredAdapter {
+            format: format_opt.unwrap_or(MsgFormatConfig::Default),
+            priority: priority_opt.unwrap_or(PriorityConfig::default()),
+        }
+    }
+}
+
+impl From<(MsgFormatConfig, PriorityConfig)> for ConfiguredAdapter {
+    fn from((format, priority): (MsgFormatConfig, PriorityConfig)) -> Self {
+        ConfiguredAdapter { format, priority }
     }
 }
 
 #[test]
 fn test_config() {
+    use Level;
+
     const TOML_CONFIG: &'static str = r#"
 format = "basic"
 ident = "foo"
 facility = "daemon"
 log_pid = true
 log_perror = true
+
+[priority]
+info = "notice"
+critical = ["alert", "mail"]
 "#;
 
     let config: SyslogConfig = toml::de::from_str(TOML_CONFIG).expect("deserialization failed");
@@ -231,7 +374,14 @@ log_perror = true
     assert_eq!(
         builder,
         SyslogBuilder::new()
-        .format(ConfiguredMsgFormat::from(MsgFormatConfig::Basic))
+        .adapter(ConfiguredAdapter::from((
+            MsgFormatConfig::Basic,
+            PriorityConfig {
+                info: Some(Priority::new(Level::Notice, None)),
+                critical: Some(Priority::new(Level::Alert, Some(Facility::Mail))),
+                ..PriorityConfig::default()
+            }
+        )))
         .ident_str("foo")
         .facility(Facility::Daemon)
         .log_pid()

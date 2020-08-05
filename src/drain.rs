@@ -1,7 +1,7 @@
+use adapter::{Adapter, DefaultAdapter, format};
 use builder::SyslogBuilder;
-use format::{DefaultMsgFormat, format, MsgFormat};
-use libc::{self, c_char, c_int};
-use slog::{self, Drain, Level, Record, OwnedKVList};
+use libc::{self, c_char};
+use slog::{self, Drain, Record, OwnedKVList};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ffi::CStr;
@@ -60,21 +60,18 @@ lazy_static! {
 /// 
 /// [`Drain`]: https://docs.rs/slog/2/slog/trait.Drain.html
 #[derive(Debug)]
-pub struct SyslogDrain<F: MsgFormat> {
+pub struct SyslogDrain<A: Adapter> {
     /// The `ident` string, if it is owned by this `SyslogDrain`.
     /// 
     /// This is kept so that the string can be freed (and `closelog` called, if
     /// necessary) when this `SyslogDrain` is dropped.
     unique_ident: Option<Box<CStr>>,
 
-    /// Log all messages with the given priority
-    log_priority: libc::c_int,
-
-    /// The format for log messages.
-    format: F,
+    /// The adapter for formatting and prioritizing log messages.
+    adapter: A,
 }
 
-impl SyslogDrain<DefaultMsgFormat> {
+impl SyslogDrain<DefaultAdapter> {
     /// Creates a new `SyslogDrain` with all default settings.
     /// 
     /// Equivalent to `SyslogBuilder::new().build()`.
@@ -83,7 +80,7 @@ impl SyslogDrain<DefaultMsgFormat> {
     }
 }
 
-impl<F: MsgFormat> SyslogDrain<F> {
+impl<A: Adapter> SyslogDrain<A> {
     /// Creates a new `SyslogBuilder`.
     /// 
     /// Equivalent to `SyslogBuilder::new()`.
@@ -92,7 +89,7 @@ impl<F: MsgFormat> SyslogDrain<F> {
         SyslogBuilder::new()
     }
 
-    pub(crate) fn from_builder(builder: SyslogBuilder<F>) -> Self {
+    pub(crate) fn from_builder(builder: SyslogBuilder<A>) -> Self {
         // `ident` is the pointer that will be passed to `openlog`, maybe null.
         // 
         // `unique_ident` is the same pointer, wrapped in `Some` and `NonNull`,
@@ -138,13 +135,12 @@ impl<F: MsgFormat> SyslogDrain<F> {
 
         SyslogDrain {
             unique_ident,
-            log_priority: builder.log_priority,
-            format: builder.format,
+            adapter: builder.adapter,
         }
     }
 }
 
-impl<F: MsgFormat> Drop for SyslogDrain<F> {
+impl<A: Adapter> Drop for SyslogDrain<A> {
     fn drop(&mut self) {
         // Check if this `SyslogDrain` was created with an owned `ident`
         // string.
@@ -219,7 +215,7 @@ impl<F: MsgFormat> Drop for SyslogDrain<F> {
     }
 }
 
-impl<F: MsgFormat> Drain for SyslogDrain<F> {
+impl<A: Adapter> Drain for SyslogDrain<A> {
     type Ok = ();
     type Err = slog::Never;
 
@@ -229,10 +225,10 @@ impl<F: MsgFormat> Drain for SyslogDrain<F> {
             let mut tl_buf = &mut *tl_buf_mut;
 
             // Figure out the priority.
-            let priority = if self.log_priority > 0 { self.log_priority } else { get_priority(record.level()) };
+            let priority = self.adapter.priority(record, values).into_raw();
 
             // Format the message. 
-            let fmt_err = format(&self.format, &mut tl_buf, record, values).err();
+            let fmt_err = format(&self.adapter, &mut tl_buf, record, values).err();
 
             // If formatting fails, use an effectively null format (which shouldn't 
             // ever fail), and separately log the error.
@@ -305,19 +301,4 @@ fn make_cstr_lossy(s: &mut Vec<u8>) -> &CStr {
 fn assert_format_success(_result: io::Result<()>) {
     #[cfg(debug)]
     _result.expect("unexpected formatting error");
-}
-
-
-pub(crate) fn get_priority(level: Level) -> c_int {
-    match level {
-        Level::Critical => libc::LOG_CRIT,
-        Level::Error => libc::LOG_ERR,
-        Level::Warning => libc::LOG_WARNING,
-        Level::Debug | Level::Trace => libc::LOG_DEBUG,
-
-        // `slog::Level` isn't non-exhaustive, so adding any more levels
-        // would be a breaking change. That is highly unlikely to ever
-        // happen. Still, we'll handle the possibility here, just in case.
-        _ => libc::LOG_INFO
-    }
 }

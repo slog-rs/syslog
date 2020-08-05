@@ -1,10 +1,10 @@
-use ::{Facility, get_priority};
-use format::{DefaultMsgFormat, MsgFormat};
+use ::{Facility, Priority, SyslogDrain};
+use adapter::{self, Adapter, DefaultAdapter};
 use libc;
-use SyslogDrain;
+use slog::{self, OwnedKVList, Record};
 use std::borrow::Cow;
 use std::ffi::{CStr, CString};
-use slog::Level;
+use std::fmt;
 
 /// Builds a [`SyslogDrain`].
 /// 
@@ -16,22 +16,20 @@ use slog::Level;
 /// [`SyslogDrain`]: struct.SyslogDrain.html
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
-pub struct SyslogBuilder<F: MsgFormat = DefaultMsgFormat> {
+pub struct SyslogBuilder<A: Adapter = DefaultAdapter> {
+    pub(crate) adapter: A,
     pub(crate) facility: Facility,
     pub(crate) ident: Option<Cow<'static, CStr>>,
     pub(crate) option: libc::c_int,
-    pub(crate) log_priority: libc::c_int,
-    pub(crate) format: F,
 }
 
 impl Default for SyslogBuilder {
     fn default() -> Self {
         SyslogBuilder {
+            adapter: DefaultAdapter,
             facility: Facility::default(),
             ident: None,
             option: 0,
-            log_priority: 0,
-            format: DefaultMsgFormat,
         }
     }
 }
@@ -43,7 +41,7 @@ impl SyslogBuilder {
     }
 }
 
-impl<F: MsgFormat> SyslogBuilder<F> {
+impl<A: Adapter> SyslogBuilder<A> {
     /// Sets the syslog facility to send logs to.
     /// 
     /// By default, this is [`Facility::User`].
@@ -240,42 +238,98 @@ impl<F: MsgFormat> SyslogBuilder<F> {
         self
     }
 
-    /// Log all messages with the given syslog priority
-    #[inline]
-    pub fn log_priority(mut self, log_priority: Level) -> Self {
-        self.log_priority = get_priority(log_priority);
-        self
-    }
-
-
-    /// Set a format for log messages and structured data.
+    /// Set the [`Adapter`], which handles formatting and message priorities.
     /// 
-    /// The default is [`DefaultMsgFormat`].
+    /// See also the [`format`] and [`priority`] methods, which offer a
+    /// convenient way to customize formatting or priority mapping.
+    /// 
+    /// The default is [`DefaultAdapter`].
     /// 
     /// # Example
     /// 
     /// ```
+    /// use slog_syslog::adapter::BasicAdapter;
     /// use slog_syslog::SyslogBuilder;
-    /// use slog_syslog::format::BasicMsgFormat;
     /// 
     /// let logger = SyslogBuilder::new()
-    ///     .format(BasicMsgFormat)
+    ///     .adapter(BasicAdapter)
     ///     .build();
     /// ```
     /// 
-    /// [`DefaultMsgFormat`]: format/struct.DefaultMsgFormat.html
-    pub fn format<F2: MsgFormat>(self, format: F2) -> SyslogBuilder<F2> {
+    /// [`Adapter`]: adapter/trait.Adapter.html
+    /// [`DefaultAdapter`]: adapter/struct.DefaultAdapter.html
+    /// [`format`]: #method.format
+    /// [`priority`]: #method.priority
+    pub fn adapter<A2: Adapter>(self, adapter: A2) -> SyslogBuilder<A2> {
+        self.map_adapter(|_| adapter)
+    }
+
+    /// Modify the [`Adapter`], which handles formatting and message
+    /// priorities.
+    /// 
+    /// This method supplies the current [`Adapter`] to the provided closure,
+    /// then replaces the current [`Adapter`] with the one that the closure
+    /// returns.
+    /// 
+    /// The [`adapter`][`Self::adapter`], [`format`], and [`priority`] methods
+    /// all call this method to replace the [`Adapter`].
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use slog_syslog::adapter::{Adapter, DefaultAdapter};
+    /// use slog_syslog::SyslogBuilder;
+    /// 
+    /// let drain = SyslogBuilder::new()
+    ///     .map_adapter(|adapter| adapter.with_fmt(|f, record, _| {
+    ///         write!(f, "here's a message: {}", record.msg())?;
+    ///         Ok(())
+    ///     }))
+    ///     .build();
+    /// ```
+    /// 
+    /// [`Self::adapter`]: #method.adapter
+    /// [`Adapter`]: adapter/trait.Adapter.html
+    /// [`format`]: #method.format
+    /// [`priority`]: #method.priority
+    pub fn map_adapter<A2, F>(self, f: F) -> SyslogBuilder<A2>
+    where
+        A2: Adapter,
+        F: FnOnce(A) -> A2,
+    {
         SyslogBuilder {
+            adapter: f(self.adapter),
             facility: self.facility,
             ident: self.ident,
             option: self.option,
-            log_priority: self.log_priority,
-            format,
         }
     }
 
+    /// Use custom message formatting.
+    /// 
+    /// See [`Adapter::with_fmt`] for details and examples.
+    /// 
+    /// [`Adapter::with_fmt`]: adapter/trait.Adapter.html#method.with_fmt
+    pub fn format<F>(self, fmt_fn: F) -> SyslogBuilder<adapter::WithFormat<A, F>>
+    where F: Fn(&mut fmt::Formatter, &Record, &OwnedKVList) -> slog::Result {
+        self.map_adapter(|adapter| adapter.with_fmt(fmt_fn))
+    }
+
+    /// Customize the mapping of [`slog::Level`]s to
+    /// [syslog priorities][`Priority`].
+    /// 
+    /// See [`Adapter::with_priority`] for details and examples.
+    /// 
+    /// [`Adapter::with_priority`]: adapter/trait.Adapter.html#method.with_priority
+    /// [`Priority`]: struct.Priority.html
+    /// [`slog::Level`]: https://docs.rs/slog/2/slog/enum.Level.html
+    pub fn priority<F>(self, priority_fn: F) -> SyslogBuilder<adapter::WithPriority<A, F>>
+    where F: Fn(&Record, &OwnedKVList) -> Priority {
+        self.map_adapter(|adapter| adapter.with_priority(priority_fn))
+    }
+
     /// Builds a `SyslogDrain` from the settings provided.
-    pub fn build(self) -> SyslogDrain<F> {
+    pub fn build(self) -> SyslogDrain<A> {
         SyslogDrain::from_builder(self)
     }
 }
