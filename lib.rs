@@ -67,14 +67,54 @@ pub struct Streamer3164 {
     level: Level,
 }
 
+#[cfg(debug_assertions)]
+fn get_default_level() -> Level {
+    if cfg!(feature = "max_level_trace") {
+        Level::Trace
+    } else if cfg!(feature = "max_level_debug") {
+        Level::Debug
+    } else if cfg!(feature = "max_level_info") {
+        Level::Info
+    } else if cfg!(feature = "max_level_warn") {
+        Level::Warning
+    } else if cfg!(feature = "max_level_error") {
+        Level::Error
+    } else { // max_level_off
+        Level::Critical
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn get_default_level() -> Level {
+    if cfg!(feature = "release_max_level_trace") {
+        Level::Trace
+    } else if cfg!(feature = "release_max_level_debug") {
+        Level::Debug
+    } else if cfg!(feature = "release_max_level_info") {
+        Level::Info
+    } else if cfg!(feature = "release_max_level_warn") {
+        Level::Warning
+    } else if cfg!(feature = "release_max_level_error") {
+        Level::Error
+    } else { // release_max_level_off
+        Level::Critical
+    }
+}
+
 impl Streamer3164 {
-    /// Create new syslog ``Streamer` using given `format`
-    pub fn new(logger: Box<syslog::Logger>, level: Level) -> Self {
+    /// Create new syslog ``Streamer` using given `format` and logging level.
+    pub fn new_with_level(logger: Box<syslog::Logger>, level: Level) -> Self {
         Streamer3164 {
             io: Mutex::new(logger),
             format: Format3164::new(),
             level,
         }
+    }
+
+    /// Create new syslog ``Streamer` using given `format` and the default logging level.
+    pub fn new(logger: Box<syslog::Logger>) -> Self {
+        let level = get_default_level();
+        Self::new_with_level(logger, level)
     }
 }
 
@@ -274,12 +314,18 @@ impl SyslogBuilder {
             } => syslog::udp(local, host, hostname, facility)?,
             SyslogKind::Tcp { server, hostname } => syslog::tcp(server, hostname, facility)?,
         };
-        Ok(Streamer3164::new(log, self.level))
+        Ok(Streamer3164::new_with_level(log, self.level))
     }
 }
 
 /// `Streamer` to Unix syslog using RFC 3164 format
-pub fn unix_3164(facility: syslog::Facility, level: Level) -> io::Result<Streamer3164> {
+pub fn unix_3164_with_level(facility: syslog::Facility, level: Level) -> io::Result<Streamer3164> {
     let logger = syslog::unix(facility)?;
-    Ok(Streamer3164::new(logger, level))
+    Ok(Streamer3164::new_with_level(logger, level))
+}
+
+/// `Streamer` to Unix syslog using RFC 3164 format
+pub fn unix_3164(facility: syslog::Facility) -> io::Result<Streamer3164> {
+    let logger = syslog::unix(facility)?;
+    Ok(Streamer3164::new(logger))
 }
