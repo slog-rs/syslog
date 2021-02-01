@@ -90,21 +90,20 @@ impl Drain for Streamer3164 {
             let mut buf = buf.borrow_mut();
             let res = {
                 || {
-                    try!(self.format.format(&mut *buf, info, logger_values));
+                    self.format.format(&mut *buf, info, logger_values)?;
                     let sever = level_to_severity(info.level());
                     {
-                        let io = try!(
+                        let io = 
                             self.io
                                 .lock()
-                                .map_err(|_| Error::new(ErrorKind::Other, "locking error"))
-                        );
+                                .map_err(|_| Error::new(ErrorKind::Other, "locking error"))?;
 
                         let buf = String::from_utf8_lossy(&buf);
                         let buf = io.format_3164(sever, &buf).into_bytes();
 
                         let mut pos = 0;
                         while pos < buf.len() {
-                            let n = try!(io.send_raw(&buf[pos..]));
+                            let n = io.send_raw(&buf[pos..])?;
                             if n == 0 {
                                 break;
                             }
@@ -137,12 +136,12 @@ impl Format3164 {
         record: &Record,
         logger_kv: &OwnedKVList,
     ) -> io::Result<()> {
-        try!(write!(io, "{}", record.msg()));
+        write!(io, "{}", record.msg())?;
 
         let mut ser = KSV::new(io);
         {
-            try!(logger_kv.serialize(record, &mut ser));
-            try!(record.kv().serialize(record, &mut ser));
+            logger_kv.serialize(record, &mut ser)?;
+            record.kv().serialize(record, &mut ser)?;
         }
         Ok(())
     }
@@ -161,7 +160,7 @@ impl<W: io::Write> KSV<W> {
 
 impl<W: io::Write> slog::Serializer for KSV<W> {
     fn emit_arguments(&mut self, key: &str, val: &fmt::Arguments) -> slog::Result {
-        try!(write!(self.io, ", {}: {}", key, val));
+        write!(self.io, ", {}: {}", key, val)?;
         Ok(())
     }
 }
