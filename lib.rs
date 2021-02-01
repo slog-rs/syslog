@@ -132,7 +132,7 @@ impl Format3164 {
 
     fn format(
         &self,
-        io: &mut io::Write,
+        io: &mut dyn io::Write,
         record: &Record,
         logger_kv: &OwnedKVList,
     ) -> io::Result<()> {
