@@ -40,19 +40,20 @@ use std::io::{Error, ErrorKind};
 use slog::KV;
 
 pub use syslog::Facility;
+use syslog::Severity;
 
 thread_local! {
     static TL_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(128))
 }
 
-fn level_to_severity(level: slog::Level) -> syslog::Severity {
+fn level_to_severity(level: slog::Level) -> Severity {
     match level {
-        Level::Critical => syslog::Severity::LOG_CRIT,
-        Level::Error => syslog::Severity::LOG_ERR,
-        Level::Warning => syslog::Severity::LOG_WARNING,
-        Level::Info => syslog::Severity::LOG_NOTICE,
-        Level::Debug => syslog::Severity::LOG_INFO,
-        Level::Trace => syslog::Severity::LOG_DEBUG,
+        Level::Critical => Severity::LOG_CRIT,
+        Level::Error => Severity::LOG_ERR,
+        Level::Warning => Severity::LOG_WARNING,
+        Level::Info => Severity::LOG_NOTICE,
+        Level::Debug => Severity::LOG_INFO,
+        Level::Trace => Severity::LOG_DEBUG,
     }
 }
 
@@ -63,14 +64,16 @@ fn level_to_severity(level: slog::Level) -> syslog::Severity {
 pub struct Streamer3164 {
     io: Mutex<Box<syslog::Logger>>,
     format: Format3164,
+    level: Level,
 }
 
 impl Streamer3164 {
     /// Create new syslog ``Streamer` using given `format`
-    pub fn new(logger: Box<syslog::Logger>) -> Self {
+    pub fn new(logger: Box<syslog::Logger>, level: Level) -> Self {
         Streamer3164 {
             io: Mutex::new(logger),
             format: Format3164::new(),
+            level,
         }
     }
 }
@@ -80,6 +83,9 @@ impl Drain for Streamer3164 {
     type Ok = ();
 
     fn log(&self, info: &Record, logger_values: &OwnedKVList) -> io::Result<()> {
+        if self.level > info.level() {
+            return Ok(())
+        }
         TL_BUF.with(|buf| {
             let mut buf = buf.borrow_mut();
             let res = {
@@ -178,14 +184,14 @@ enum SyslogKind {
 /// Builder pattern for constructing a syslog
 pub struct SyslogBuilder {
     facility: Option<syslog::Facility>,
-    level: syslog::Severity,
+    level: Level,
     logkind: Option<SyslogKind>,
 }
 impl Default for SyslogBuilder {
     fn default() -> Self {
         Self {
             facility: None,
-            level: syslog::Severity::LOG_DEBUG,
+            level: Level::Trace,
             logkind: None,
         }
     }
@@ -208,7 +214,7 @@ impl SyslogBuilder {
     /// Filter Syslog by level
     pub fn level(self, lvl: slog::Level) -> Self {
         let mut s = self;
-        s.level = level_to_severity(lvl);
+        s.level = lvl;
         s
     }
 
@@ -269,11 +275,12 @@ impl SyslogBuilder {
             } => syslog::udp(local, host, hostname, facility)?,
             SyslogKind::Tcp { server, hostname } => syslog::tcp(server, hostname, facility)?,
         };
-        Ok(Streamer3164::new(log))
+        Ok(Streamer3164::new(log, self.level))
     }
 }
 
 /// `Streamer` to Unix syslog using RFC 3164 format
-pub fn unix_3164(facility: syslog::Facility) -> io::Result<Streamer3164> {
-    syslog::unix(facility).map(Streamer3164::new)
+pub fn unix_3164(facility: syslog::Facility, level: Level) -> io::Result<Streamer3164> {
+    let logger = syslog::unix(facility)?;
+    Ok(Streamer3164::new(logger, level))
 }
