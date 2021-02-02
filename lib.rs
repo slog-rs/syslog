@@ -25,10 +25,6 @@
 //! ```
 #![warn(missing_docs)]
 
-extern crate nix;
-extern crate slog;
-extern crate syslog;
-
 use slog::{Drain, Level, OwnedKVList, Record};
 use std::{fmt, io};
 use std::sync::Mutex;

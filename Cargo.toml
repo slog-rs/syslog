@@ -9,6 +9,7 @@ documentation = "https://docs.rs/slog-rs/term"
 homepage = "https://github.com/slog-rs/slog"
 repository = "https://github.com/slog-rs/syslog"
 readme = "README.md"
+edition = "2018"
 
 [lib]
 path = "lib.rs"
@@ -16,4 +17,3 @@ path = "lib.rs"
 [dependencies]
 slog = "^2.1.1"
 syslog = "3.3.0"
-nix = "0.14.0"
