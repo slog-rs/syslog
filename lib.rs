@@ -36,20 +36,47 @@ use std::io::{Error, ErrorKind};
 use slog::KV;
 
 pub use syslog::Facility;
-use syslog::Severity;
 
 thread_local! {
     static TL_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(128))
 }
 
-fn level_to_severity(level: slog::Level) -> Severity {
-    match level {
-        Level::Critical => Severity::LOG_CRIT,
-        Level::Error => Severity::LOG_ERR,
-        Level::Warning => Severity::LOG_WARNING,
-        Level::Info => Severity::LOG_NOTICE,
-        Level::Debug => Severity::LOG_INFO,
-        Level::Trace => Severity::LOG_DEBUG,
+type SysLogger = syslog::Logger<syslog::LoggerBackend, syslog::Formatter3164>;
+
+#[inline]
+fn handle_syslog_error(e: syslog::Error) -> io::Error
+{
+    Error::new(ErrorKind::Other, e.to_string())
+}
+
+fn log_with_level(level: slog::Level, mut io: std::sync::MutexGuard<Box<SysLogger>>, buf: &str) -> io::Result<()> {
+    let err = match level {
+        Level::Critical => io.crit(&buf),
+        Level::Error => io.err(&buf),
+        Level::Warning => io.warning(&buf),
+        Level::Info => io.notice(&buf),
+        Level::Debug => io.info(&buf),
+        Level::Trace => io.debug(&buf),
+    };
+    err.map_err(handle_syslog_error)
+}
+
+/// Create a formatter with runtime metadata filled in. 
+///
+/// This follows ``get_process_info()`` in the syslog crate to some extent
+/// which is private.
+fn syslog_format3164(facility: syslog::Facility, hostname: Option<String>) -> syslog::Formatter3164 {
+    let path = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::new());
+    let process = path.file_name()
+        .map(|file| file.to_string_lossy().into_owned())
+        .unwrap_or_else(|| String::new());
+
+    syslog::Formatter3164 {
+        facility,
+        hostname,
+        process,
+        pid: std::process::id() as i32,
     }
 }
 
@@ -58,7 +85,7 @@ fn level_to_severity(level: slog::Level) -> Severity {
 /// Uses mutex to serialize writes.
 /// TODO: Add one that does not serialize?
 pub struct Streamer3164 {
-    io: Mutex<Box<syslog::Logger>>,
+    io: Mutex<Box<SysLogger>>,
     format: Format3164,
     level: Level,
 }
@@ -99,7 +126,7 @@ fn get_default_level() -> Level {
 
 impl Streamer3164 {
     /// Create new syslog ``Streamer` using given `format` and logging level.
-    pub fn new_with_level(logger: Box<syslog::Logger>, level: Level) -> Self {
+    pub fn new_with_level(logger: Box<SysLogger>, level: Level) -> Self {
         Streamer3164 {
             io: Mutex::new(logger),
             format: Format3164::new(),
@@ -108,7 +135,7 @@ impl Streamer3164 {
     }
 
     /// Create new syslog ``Streamer` using given `format` and the default logging level.
-    pub fn new(logger: Box<syslog::Logger>) -> Self {
+    pub fn new(logger: Box<SysLogger>) -> Self {
         let level = get_default_level();
         Self::new_with_level(logger, level)
     }
@@ -127,28 +154,14 @@ impl Drain for Streamer3164 {
             let res = {
                 || {
                     self.format.format(&mut *buf, info, logger_values)?;
-                    let sever = level_to_severity(info.level());
-                    {
-                        let io = 
-                            self.io
-                                .lock()
-                                .map_err(|_| Error::new(ErrorKind::Other, "locking error"))?;
+                    let io = 
+                        self.io
+                        .lock()
+                        .map_err(|_| Error::new(ErrorKind::Other, "locking error"))?;
 
-                        let buf = String::from_utf8_lossy(&buf);
-                        let buf = io.format_3164(sever, &buf).into_bytes();
+                    let buf = String::from_utf8_lossy(&buf);
 
-                        let mut pos = 0;
-                        while pos < buf.len() {
-                            let n = io.send_raw(&buf[pos..])?;
-                            if n == 0 {
-                                break;
-                            }
-
-                            pos += n;
-                        }
-                    }
-
-                    Ok(())
+                    log_with_level(info.level(), io, &buf)
                 }
             }();
             buf.clear();
@@ -302,26 +315,41 @@ impl SyslogBuilder {
             }
         };
         let log = match logkind {
-            SyslogKind::Unix { path } => syslog::unix_custom(facility, path)?,
+            SyslogKind::Unix { path } => {
+                let format = syslog_format3164(facility, None);
+                syslog::unix_custom(format, path).map_err(handle_syslog_error)?
+            }
             SyslogKind::Udp {
                 local,
                 host,
                 hostname,
-            } => syslog::udp(local, host, hostname, facility)?,
-            SyslogKind::Tcp { server, hostname } => syslog::tcp(server, hostname, facility)?,
+            } => {
+                let format = syslog_format3164(facility, Some(hostname));
+                syslog::udp(format, local, host).map_err(handle_syslog_error)?
+            },
+            SyslogKind::Tcp { server, hostname } => {
+                let format = syslog_format3164(facility, Some(hostname));
+                syslog::tcp(format, server).map_err(handle_syslog_error)?
+            },
         };
-        Ok(Streamer3164::new_with_level(log, self.level))
+        Ok(Streamer3164::new_with_level(Box::new(log), self.level))
     }
 }
 
 /// `Streamer` to Unix syslog using RFC 3164 format
 pub fn unix_3164_with_level(facility: syslog::Facility, level: Level) -> io::Result<Streamer3164> {
-    let logger = syslog::unix(facility)?;
-    Ok(Streamer3164::new_with_level(logger, level))
+    let format = syslog_format3164(facility, None);
+    syslog::unix(format)
+        .map(Box::new)
+        .map(|logger| Streamer3164::new_with_level(logger, level))
+        .map_err(handle_syslog_error)
 }
 
 /// `Streamer` to Unix syslog using RFC 3164 format
 pub fn unix_3164(facility: syslog::Facility) -> io::Result<Streamer3164> {
-    let logger = syslog::unix(facility)?;
-    Ok(Streamer3164::new(logger))
+    let format = syslog_format3164(facility, None);
+    syslog::unix(format)
+        .map(Box::new)
+        .map(Streamer3164::new)
+        .map_err(handle_syslog_error)
 }
