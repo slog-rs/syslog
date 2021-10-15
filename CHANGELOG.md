@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## 0.13.0 - 2021-10-14
+
+* Update syslog to 5.0
+* Misc improvements
+
 ## 0.12.0 - 2019-08-05
 
 * Update nix dependency to 0.14.0
