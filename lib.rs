@@ -146,8 +146,8 @@ impl Drain for Streamer3164 {
     type Ok = ();
 
     fn log(&self, info: &Record, logger_values: &OwnedKVList) -> io::Result<()> {
-        if self.level > info.level() {
-            return Ok(())
+        if !info.level().is_at_least(self.level) {
+            return Ok(());
         }
         TL_BUF.with(|buf| {
             let mut buf = buf.borrow_mut();
