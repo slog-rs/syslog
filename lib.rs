@@ -76,7 +76,7 @@ fn syslog_format3164(
     let process = path
         .file_name()
         .map(|file| file.to_string_lossy().into_owned())
-        .unwrap_or_else(|| String::new());
+        .unwrap_or_default();
 
     syslog::Formatter3164 {
         facility,
@@ -179,6 +179,7 @@ impl Drain for Streamer3164 {
 }
 
 /// Formatter to format defined in RFC 3164
+#[derive(Default)]
 pub struct Format3164;
 
 impl Format3164 {
@@ -195,7 +196,7 @@ impl Format3164 {
     ) -> io::Result<()> {
         write!(io, "{}", record.msg())?;
 
-        let mut ser = KSV::new(io);
+        let mut ser = KeyValueSerializer::new(io);
         {
             logger_kv.serialize(record, &mut ser)?;
             record.kv().serialize(record, &mut ser)?;
@@ -205,17 +206,17 @@ impl Format3164 {
 }
 
 /// Key-Separator-Value serializer
-struct KSV<W: io::Write> {
+struct KeyValueSerializer<W: io::Write> {
     io: W,
 }
 
-impl<W: io::Write> KSV<W> {
+impl<W: io::Write> KeyValueSerializer<W> {
     fn new(io: W) -> Self {
-        KSV { io: io }
+        KeyValueSerializer { io }
     }
 }
 
-impl<W: io::Write> slog::Serializer for KSV<W> {
+impl<W: io::Write> slog::Serializer for KeyValueSerializer<W> {
     fn emit_arguments(&mut self, key: &str, val: &fmt::Arguments) -> slog::Result {
         write!(self.io, ", {}: {}", key, val)?;
         Ok(())
