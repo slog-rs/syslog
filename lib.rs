@@ -146,7 +146,7 @@ impl Drain for Streamer3164 {
     type Ok = ();
 
     fn log(&self, info: &Record, logger_values: &OwnedKVList) -> io::Result<()> {
-        if self.level > info.level() {
+        if self.level.as_usize() < info.level().as_usize() {
             return Ok(())
         }
         TL_BUF.with(|buf| {
